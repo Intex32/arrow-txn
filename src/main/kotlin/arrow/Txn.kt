@@ -1,6 +1,7 @@
 package arrow
 
 import arrow.atomic.AtomicInt
+import arrow.atomic.AtomicLong
 import arrow.core.*
 import arrow.core.continuations.AtomicRef
 import arrow.core.raise.Raise
@@ -9,12 +10,23 @@ import arrow.resilience.SagaDSLMarker
 import io.ktor.utils.io.*
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 typealias Txn<E, A> = suspend context(TxnScope<E>) () -> A
 
 @DslMarker annotation class TxnDslMarker
 
 interface TxnScope<E> : Raise<E>, SagaScope<E> {
+
+    /**
+     * globally unique ID identifying this txn
+     */
+    val id: String
+
+    /**
+     * unique ID for this local runtime instance
+     */
+    val localRuntimeId: Long
 
     suspend fun <A> Txn<E, A>.bindTxn(): A = invoke(this@TxnScope)
 
@@ -81,7 +93,7 @@ suspend fun <E, A> runTxn(txn: suspend TxnScope<E>.() -> A): Either<E, A> =
 
 
 
-
+private val localRuntimeIdCounter = AtomicLong(0)
 
 // Internal implementation of the `txn { }` builder.
 @PublishedApi
@@ -89,6 +101,9 @@ internal class TxnBuilder<E>(
     private val stack: AtomicRef<List<suspend () -> Unit>> = AtomicRef(emptyList()),
     raiseContext: Raise<E>,
 ) : TxnScope<E>, Raise<E> by raiseContext {
+
+    override val id = UUID.randomUUID().toString()
+    override val localRuntimeId = localRuntimeIdCounter.incrementAndGet()
 
     private val onSuccessfulActions: AtomicRef<List<() -> Unit>> = AtomicRef(emptyList())
     private val onFailureActions: AtomicRef<List<() -> Unit>> = AtomicRef(emptyList())
